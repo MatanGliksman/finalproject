@@ -1,0 +1,121 @@
+import base64
+import qrcode
+import cv2
+import numpy as np
+import platform
+import subprocess
+import os
+
+# --- CONSTANTS ---
+MAX_QR_BYTES = 400  # Safe size for standard webcams
+HEADER_SEP = ":"
+COUNT_SEP = "/"
+
+
+def encode_data_to_payloads(data_bytes):
+    """
+    Takes raw bytes (file or text) and returns a list of strings
+    formatted as: "INDEX/TOTAL:BASE64_DATA"
+    """
+    # 1. Compress/Encode to Base64
+    b64_data = base64.b64encode(data_bytes).decode('utf-8')
+
+    # 2. Split into chunks
+    chunks = [b64_data[i:i + MAX_QR_BYTES] for i in range(0, len(b64_data), MAX_QR_BYTES)]
+    total = len(chunks)
+
+    payloads = []
+    for i, chunk in enumerate(chunks):
+        # Protocol Format: "1/50:......"
+        payload = f"{i + 1}{COUNT_SEP}{total}{HEADER_SEP}{chunk}"
+        payloads.append(payload)
+
+    return payloads
+
+
+def generate_qr_image(payload, current_index, total_count):
+    """Generates a QR image with a green border and text overlay."""
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=10,
+        border=2
+    )
+    qr.add_data(payload)
+    qr.make(fit=True)
+
+    # Convert to OpenCV format
+    img_pil = qr.make_image(fill_color="black", back_color="white").convert('RGB')
+    img_cv = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
+
+    # Add Protocol Styling (Green Border for tracking)
+    img_cv = cv2.copyMakeBorder(img_cv, 50, 50, 50, 50, cv2.BORDER_CONSTANT, value=(0, 255, 0))
+
+    # Add Human Readable Text
+    text = f"Packet {current_index}/{total_count}"
+    cv2.putText(img_cv, text, (30, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
+
+    return img_cv
+
+
+def parse_qr_payload(text):
+    """
+    Parses a string.
+    Returns: (index, total_chunks, data_string) if valid.
+    Returns: None if invalid.
+    """
+    try:
+        if HEADER_SEP not in text or COUNT_SEP not in text:
+            return None
+
+        header, data = text.split(HEADER_SEP, 1)
+        idx_str, total_str = header.split(COUNT_SEP)
+
+        return int(idx_str), int(total_str), data
+    except ValueError:
+        return None
+
+
+def rebuild_file(received_chunks_dict, total_chunks, save_dir="received_files"):
+    """Reassembles the chunks and saves the file."""
+    print("\n🔨 Protocol: Reassembling file...")
+
+    # Sort and join
+    sorted_data = "".join(received_chunks_dict[i] for i in range(1, total_chunks + 1))
+
+    try:
+        file_bytes = base64.b64decode(sorted_data)
+    except Exception as e:
+        print(f"❌ Protocol Error: Base64 decode failed ({e})")
+        return None
+
+    # Guess Extension
+    try:
+        file_bytes.decode('utf-8')
+        ext = ".txt"
+    except:
+        ext = ".bin"
+
+    # Save
+    import time
+    filename = f"received_{int(time.time())}{ext}"
+    filepath = os.path.join(save_dir, filename)
+
+    os.makedirs(save_dir, exist_ok=True)
+    with open(filepath, "wb") as f:
+        f.write(file_bytes)
+
+    return filepath
+
+
+def open_file_native(path):
+    """Opens a file with the OS default application."""
+    try:
+        if platform.system() == 'Windows':
+            os.startfile(path)
+        elif platform.system() == 'Darwin':
+            subprocess.call(('open', path))
+        else:
+            subprocess.call(('xdg-open', path))
+    except:
+        print("⚠️ Could not auto-open file.")
