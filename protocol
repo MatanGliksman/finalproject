@@ -6,35 +6,26 @@ import platform
 import subprocess
 import os
 
-# --- CONSTANTS ---
-MAX_QR_BYTES = 400  # Safe size for standard webcams
+# --- CONFIGURATION (Matched to your working setup) ---
+MAX_QR_BYTES = 400  # Your safe size limit
+BATCH_SIZE = 5  # Send 5 chunks, then wait for confirmation
 HEADER_SEP = ":"
 COUNT_SEP = "/"
 
 
+# --- ENCODING ---
 def encode_data_to_payloads(data_bytes):
-    """
-    Takes raw bytes (file or text) and returns a list of strings
-    formatted as: "INDEX/TOTAL:BASE64_DATA"
-    """
-    # 1. Compress/Encode to Base64
+    """Encodes file bytes into a list of protocol strings."""
     b64_data = base64.b64encode(data_bytes).decode('utf-8')
-
-    # 2. Split into chunks
     chunks = [b64_data[i:i + MAX_QR_BYTES] for i in range(0, len(b64_data), MAX_QR_BYTES)]
     total = len(chunks)
-
-    payloads = []
-    for i, chunk in enumerate(chunks):
-        # Protocol Format: "1/50:......"
-        payload = f"{i + 1}{COUNT_SEP}{total}{HEADER_SEP}{chunk}"
-        payloads.append(payload)
-
-    return payloads
+    # Format: "INDEX/TOTAL:DATA"
+    return [f"{i + 1}{COUNT_SEP}{total}{HEADER_SEP}{c}" for i, c in enumerate(chunks)]
 
 
-def generate_qr_image(payload, current_index, total_count):
-    """Generates a QR image with a green border and text overlay."""
+# --- VISUALS (Your Specific Style) ---
+def generate_qr_image(payload, current_index, total_count, title=None):
+    """Generates a QR with the Green Border you found works best."""
     qr = qrcode.QRCode(
         version=None,
         error_correction=qrcode.constants.ERROR_CORRECT_M,
@@ -44,72 +35,74 @@ def generate_qr_image(payload, current_index, total_count):
     qr.add_data(payload)
     qr.make(fit=True)
 
-    # Convert to OpenCV format
     img_pil = qr.make_image(fill_color="black", back_color="white").convert('RGB')
     img_cv = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
 
-    # Add Protocol Styling (Green Border for tracking)
+    # --- YOUR STYLE: 50px Green Border ---
     img_cv = cv2.copyMakeBorder(img_cv, 50, 50, 50, 50, cv2.BORDER_CONSTANT, value=(0, 255, 0))
 
-    # Add Human Readable Text
-    text = f"Packet {current_index}/{total_count}"
-    cv2.putText(img_cv, text, (30, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
+    # Determine Text
+    if title:
+        text = title
+    else:
+        text = f"Packet {current_index}/{total_count}"
 
+    cv2.putText(img_cv, text, (30, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
     return img_cv
 
 
+# --- PARSING ---
 def parse_qr_payload(text):
-    """
-    Parses a string.
-    Returns: (index, total_chunks, data_string) if valid.
-    Returns: None if invalid.
-    """
+    """Parses standard data chunks (INDEX/TOTAL:DATA)."""
     try:
-        if HEADER_SEP not in text or COUNT_SEP not in text:
-            return None
-
+        if HEADER_SEP not in text or COUNT_SEP not in text: return None
         header, data = text.split(HEADER_SEP, 1)
         idx_str, total_str = header.split(COUNT_SEP)
-
         return int(idx_str), int(total_str), data
-    except ValueError:
-        return None
-
-
-def rebuild_file(received_chunks_dict, total_chunks, save_dir="received_files"):
-    """Reassembles the chunks and saves the file."""
-    print("\n🔨 Protocol: Reassembling file...")
-
-    # Sort and join
-    sorted_data = "".join(received_chunks_dict[i] for i in range(1, total_chunks + 1))
-
-    try:
-        file_bytes = base64.b64decode(sorted_data)
-    except Exception as e:
-        print(f"❌ Protocol Error: Base64 decode failed ({e})")
-        return None
-
-    # Guess Extension
-    try:
-        file_bytes.decode('utf-8')
-        ext = ".txt"
     except:
-        ext = ".bin"
+        return None
 
-    # Save
-    import time
-    filename = f"received_{int(time.time())}{ext}"
-    filepath = os.path.join(save_dir, filename)
 
-    os.makedirs(save_dir, exist_ok=True)
-    with open(filepath, "wb") as f:
-        f.write(file_bytes)
+def parse_control_msg(text):
+    """Parses Handshake (SYN) and Acknowledge (ACK/NACK) messages."""
+    try:
+        if text.startswith("SYN:"):
+            parts = text.split(":")
+            return "SYN", {"total": int(parts[1]), "filename": parts[2]}
+        elif text.startswith("ACK:"):
+            return "ACK", int(text.split(":")[1])
+        elif text.startswith("NACK:"):
+            parts = text.split(":")
+            missing = [int(x) for x in parts[2].split(",")] if len(parts) > 2 and parts[2] else []
+            return "NACK", {"batch_id": int(parts[1]), "missing": missing}
+        elif text.startswith("SYNC_CHECK:"):
+            return "SYNC_CHECK", int(text.split(":")[1])
+    except:
+        pass
+    return "DATA", None
 
-    return filepath
+
+# --- FILE REBUILDING ---
+def rebuild_file(received_chunks_dict, total_chunks, filename="received_file"):
+    print("\n🔨 Reassembling file...")
+    try:
+        # Sort by index (1..Total)
+        sorted_data = "".join(received_chunks_dict[i] for i in range(1, total_chunks + 1))
+        file_bytes = base64.b64decode(sorted_data)
+
+        save_dir = "received_files"
+        os.makedirs(save_dir, exist_ok=True)
+        filepath = os.path.join(save_dir, filename)
+
+        with open(filepath, "wb") as f:
+            f.write(file_bytes)
+        return filepath
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        return None
 
 
 def open_file_native(path):
-    """Opens a file with the OS default application."""
     try:
         if platform.system() == 'Windows':
             os.startfile(path)
@@ -118,4 +111,4 @@ def open_file_native(path):
         else:
             subprocess.call(('xdg-open', path))
     except:
-        print("⚠️ Could not auto-open file.")
+        print("⚠️ Could not auto-open.")
