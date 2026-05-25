@@ -8,7 +8,7 @@ import os
 
 # --- CONFIGURATION (Matched to your working setup) ---
 MAX_QR_BYTES = 400  # Your safe size limit
-BATCH_SIZE = 5  # Send 5 chunks, then wait for confirmation
+BATCH_SIZE = 10  # Send 5 chunks, then wait for confirmation
 HEADER_SEP = ":"
 COUNT_SEP = "/"
 
