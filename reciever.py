@@ -17,7 +17,7 @@ except ImportError:
 
 WINDOW_NAME = "Receiver"
 
-def show_ack_qr(text, title, duration=2):
+def show_ack_qr(text, title, duration=0.5):
     img = qr_protocol.generate_qr_image(text, 0, 0, title=title)
     cv2.imshow("Response_QR", img)
     cv2.waitKey(int(duration * 1000))
@@ -101,7 +101,7 @@ def main():
                     total_expected = content['total']
                     filename = content['filename']
                     print(f"✅ Handshake! File: {filename} ({total_expected} chunks)")
-                    show_ack_qr(f"ACK:{total_expected}", "HANDSHAKE ACCEPTED")
+                    show_ack_qr(f"ACK:{total_expected}", "HANDSHAKE ACCEPTED", duration=0.5)
                     state = "RECEIVING"
 
             elif state == "RECEIVING":
@@ -123,12 +123,12 @@ def main():
 
                         if not missing:
                             print(f"✅ Batch {batch_id} Done.")
-                            show_ack_qr(f"ACK:{batch_id}", "BATCH RECEIVED")
+                            show_ack_qr(f"ACK:{batch_id}", "BATCH RECEIVED", duration=0.5)
                             current_batch += 1
                         else:
                             print(f"⚠️ Batch {batch_id} Missing: {missing}")
                             missing_str = ",".join(map(str, missing))
-                            show_ack_qr(f"NACK:{batch_id}:{missing_str}", "RETRY REQUEST")
+                            show_ack_qr(f"NACK:{batch_id}:{missing_str}", "RETRY REQUEST", duration=0.5)
 
         # GUI
         cv2.putText(frame, f"State: {state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
