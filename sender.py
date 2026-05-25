@@ -17,7 +17,7 @@ except ImportError:
     sys.exit(1)
 
 WINDOW_NAME = "QR Sender"
-FPS = 5
+FPS = 3
 
 
 def scan_for_ack(cap, timeout=5):
